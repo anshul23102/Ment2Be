@@ -32,47 +32,13 @@ router.get('/mentee/:menteeId', getTasksByMentee);
 // Submit task proof (files) - MUST come before /:id route
 router.post('/submit-proof', authenticateToken, submitTaskProof);
 
-// Get task by ID
-router.get('/:id', getTaskById);
+// Get task by ID - requires authentication to prevent unauthenticated enumeration
+router.get('/:id', authenticateToken, getTaskById);
 
-// Update task
+// Update task - ownership check is enforced inside the controller
 router.put('/:id', authenticateToken, updateTask);
 
-// Delete task
+// Delete task - ownership check is enforced inside the controller
 router.delete('/:id', authenticateToken, deleteTask);
-
-// DEBUG: Delete all tasks (for testing only)
-router.delete('/debug/delete-all', async (req, res) => {
-  try {
-    const result = await Task.deleteMany({});
-    res.status(200).json({
-      success: true,
-      message: `Deleted ${result.deletedCount} tasks`,
-      deletedCount: result.deletedCount
-    });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: 'Error deleting tasks: ' + error.message
-    });
-  }
-});
-
-// DEBUG: Update all tasks status to 'not-started' (for testing only)
-router.put('/debug/update-status', async (req, res) => {
-  try {
-    const result = await Task.updateMany({}, { status: 'not-started' });
-    res.status(200).json({
-      success: true,
-      message: `Updated ${result.modifiedCount} tasks to 'not-started'`,
-      modifiedCount: result.modifiedCount
-    });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: 'Error updating tasks: ' + error.message
-    });
-  }
-});
 
 export default router;
