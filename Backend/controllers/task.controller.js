@@ -64,10 +64,10 @@ export const createTask = async (req, res) => {
       instructions,
       mentorId,
       menteeId,
-      menteeName, // Set the mentee's real name
-      mentorName, // Set the mentor's real name
-      category: category || 'Technical Skills', // Default if empty
-      priority: priority || 'medium', // Default if empty
+      menteeName,
+      mentorName,
+      category: category || 'Technical Skills',
+      priority: priority || 'medium',
       dueDate,
       estimatedTime,
       resources,
@@ -75,7 +75,7 @@ export const createTask = async (req, res) => {
       requireSubmission,
       attachments: effectiveAttachments,
       attachmentsMeta: normalizedAttachmentsMeta,
-      status: 'not-started' // Default status - Not Started
+      status: 'not-started'
     });
 
     await newTask.save();
@@ -97,29 +97,23 @@ export const createTask = async (req, res) => {
 // Get all tasks for a mentor
 export const getTasksByMentor = async (req, res) => {
   try {
-    // JWT token uses 'id' field, not '_id'
     const mentorIdString = req.user.id || req.user._id;
     
-    // Convert string to MongoDB ObjectId
     const mentorId = new mongoose.Types.ObjectId(mentorIdString);
     
     console.log('[Task Controller] Searching for mentorId (ObjectId):', mentorId);
 
-    // Get tasks for this mentor and populate mentor info
     let tasks = await Task.find({ mentorId })
       .populate('mentorId', 'name profilePicture')
       .sort({ createdAt: -1 });
 
-    // Fetch mentee and mentor names for all tasks (including existing ones without names)
     for (let task of tasks) {
       let needsSave = false;
       
-      // Fetch mentee name if missing
       if (task.menteeId) {
         try {
           const mentee = await User.findById(task.menteeId);
           if (mentee && mentee.name) {
-            // Update menteeName if it's missing or default
             if (!task.menteeName || task.menteeName === 'Student') {
               task.menteeName = mentee.name;
               needsSave = true;
@@ -130,7 +124,6 @@ export const getTasksByMentor = async (req, res) => {
         }
       }
       
-      // Fetch mentor name if missing
       if (task.mentorId && typeof task.mentorId === 'object' && task.mentorId.name) {
         if (!task.mentorName || task.mentorName === 'Mentor') {
           task.mentorName = task.mentorId.name;
@@ -143,7 +136,6 @@ export const getTasksByMentor = async (req, res) => {
       }
     }
     
-    // Map mentor info to mentorName for frontend
     tasks = tasks.map(task => {
       const taskObj = task.toObject ? task.toObject() : task;
       if (taskObj.mentorId && taskObj.mentorId.name) {
@@ -175,18 +167,16 @@ export const getTasksByMentee = async (req, res) => {
 
     console.log('[Task Controller] Fetching tasks for menteeId:', menteeId);
 
-    // First, get ALL tasks to see what's in the database
     const allTasks = await Task.find({});
     console.log('[Task Controller] Total tasks in database:', allTasks.length);
     allTasks.forEach(task => {
       console.log('[Task Controller] Task menteeId:', task.menteeId, 'Type:', typeof task.menteeId, 'Task:', task.title);
     });
 
-    // Search for tasks with menteeId as either String or ObjectId
     const tasks = await Task.find({
       $or: [
-        { menteeId: menteeId }, // String comparison
-        { menteeId: new mongoose.Types.ObjectId(menteeId) } // ObjectId comparison
+        { menteeId: menteeId },
+        { menteeId: new mongoose.Types.ObjectId(menteeId) }
       ]
     })
       .populate('mentorId', 'name profilePicture')
@@ -238,10 +228,14 @@ export const getTaskById = async (req, res) => {
 };
 
 // Update task
+// Access rules:
+//   Mentor (task creator): may update all task fields.
+//   Mentee (task assignee): may update status and progress only.
+//   Any other authenticated user: 403 Forbidden.
 export const updateTask = async (req, res) => {
   try {
     const { id } = req.params;
-    const { title, description, category, priority, status, dueDate, progress, instructions, estimatedTime, resources, notifyMentee, requireSubmission } = req.body;
+    const requesterId = (req.user.id || req.user._id).toString();
 
     const task = await Task.findById(id);
 
@@ -252,11 +246,49 @@ export const updateTask = async (req, res) => {
       });
     }
 
-    // Update fields
-    if (title) task.title = title;
-    if (description) task.description = description;
-    if (category) task.category = category;
-    if (priority) task.priority = priority;
+    const taskMentorId = task.mentorId.toString();
+    const taskMenteeId = task.menteeId ? task.menteeId.toString() : null;
+
+    const isMentor = requesterId === taskMentorId;
+    const isMentee = taskMenteeId !== null && requesterId === taskMenteeId;
+
+    if (!isMentor && !isMentee) {
+      return res.status(403).json({
+        success: false,
+        message: 'Forbidden: you do not have permission to update this task'
+      });
+    }
+
+    const {
+      title,
+      description,
+      category,
+      priority,
+      status,
+      dueDate,
+      progress,
+      instructions,
+      estimatedTime,
+      resources,
+      notifyMentee,
+      requireSubmission
+    } = req.body;
+
+    // Only the mentor who created the task may change its core definition fields.
+    if (isMentor) {
+      if (title) task.title = title;
+      if (description) task.description = description;
+      if (category) task.category = category;
+      if (priority) task.priority = priority;
+      if (dueDate) task.dueDate = dueDate;
+      if (instructions) task.instructions = instructions;
+      if (estimatedTime) task.estimatedTime = estimatedTime;
+      if (resources) task.resources = resources;
+      if (notifyMentee !== undefined) task.notifyMentee = notifyMentee;
+      if (requireSubmission !== undefined) task.requireSubmission = requireSubmission;
+    }
+
+    // Both the mentor and the mentee may update status and progress.
     if (status) {
       task.status = status;
       // Auto-sync progress based on status if progress not explicitly provided
@@ -279,13 +311,7 @@ export const updateTask = async (req, res) => {
         }
       }
     }
-    if (dueDate) task.dueDate = dueDate;
     if (progress !== undefined) task.progress = progress;
-    if (instructions) task.instructions = instructions;
-    if (estimatedTime) task.estimatedTime = estimatedTime;
-    if (resources) task.resources = resources;
-    if (notifyMentee !== undefined) task.notifyMentee = notifyMentee;
-    if (requireSubmission !== undefined) task.requireSubmission = requireSubmission;
 
     await task.save();
 
@@ -304,11 +330,14 @@ export const updateTask = async (req, res) => {
 };
 
 // Delete task
+// Only the mentor who created the task is permitted to delete it.
 export const deleteTask = async (req, res) => {
   try {
     const { id } = req.params;
+    const requesterId = (req.user.id || req.user._id).toString();
 
-    const task = await Task.findByIdAndDelete(id);
+    // Fetch first so we can check ownership before deleting.
+    const task = await Task.findById(id);
 
     if (!task) {
       return res.status(404).json({
@@ -316,6 +345,15 @@ export const deleteTask = async (req, res) => {
         message: 'Task not found'
       });
     }
+
+    if (task.mentorId.toString() !== requesterId) {
+      return res.status(403).json({
+        success: false,
+        message: 'Forbidden: only the mentor who created this task can delete it'
+      });
+    }
+
+    await Task.findByIdAndDelete(id);
 
     res.status(200).json({
       success: true,
@@ -383,10 +421,8 @@ export const getTasksByMentorAndMentee = async (req, res) => {
 // Submit task proof (files)
 export const submitTaskProof = async (req, res) => {
   try {
-    // Handle both FormData and JSON body
     let taskId = req.body?.taskId;
     
-    // If taskId not in body, check FormData fields
     if (!taskId && req.body) {
       taskId = Object.keys(req.body).find(key => key === 'taskId') ? req.body.taskId : null;
     }
@@ -402,7 +438,6 @@ export const submitTaskProof = async (req, res) => {
       });
     }
 
-    // Find the task
     const task = await Task.findById(taskId);
     if (!task) {
       return res.status(404).json({
@@ -411,7 +446,6 @@ export const submitTaskProof = async (req, res) => {
       });
     }
 
-    // Verify user is the mentee of this task
     const menteeIdStr = task.menteeId.toString();
     const userIdStr = userId.toString();
     
@@ -424,12 +458,10 @@ export const submitTaskProof = async (req, res) => {
       });
     }
 
-    // Initialize uploadedFiles array if it doesn't exist
     if (!task.uploadedFiles) {
       task.uploadedFiles = [];
     }
 
-    // Add file information from request
     const files = req.body.files || [];
     
     if (files && files.length > 0) {
@@ -443,14 +475,12 @@ export const submitTaskProof = async (req, res) => {
         });
       });
     } else {
-      // If no files in request, just mark as submitted
       task.uploadedFiles.push({
         name: 'Proof Submitted',
         uploadedAt: new Date().toISOString()
       });
     }
 
-    // Save the task
     await task.save();
 
     console.log('Proof submitted successfully for task:', taskId);
